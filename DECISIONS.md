@@ -112,3 +112,51 @@ confirmed regardless; the user can always see it in their dashboard.
 ### Stripe API version
 Pinned to `2025-02-24.acacia` (matches installed `stripe@17.5` types).
 Bump deliberately when upgrading the SDK.
+
+## Phase 3
+
+### FullCalendar over a custom build
+Spec called out FullCalendar. Used it as-is with `dayGrid` + `interaction`
+plugins. Events fetched via `/api/admin/calendar?start=&end=` on each
+`datesSet` so the admin can navigate months without preloading the whole
+history. Trailer colors are deterministic from creation order (stable HSL hue
+offsets) so the legend and events stay in sync even after renames.
+
+### Booking status state machine
+Admin actions strictly gate transitions:
+- `approve`: pending → confirmed
+- `mark_picked_up`: confirmed → active
+- `mark_returned`: active → completed (also set by the return inspection)
+- `capture_deposit`: allowed from active or completed; captures against the
+  deposit PI via `stripe.paymentIntents.capture` with a partial
+  `amount_to_capture`
+- `release_deposit`: allowed from active/completed/cancelled; cancels the
+  deposit PI (releases the hold)
+
+Recording a pickup/return inspection also transitions status (pickup →
+active, return → completed). That couples inspection with status change so
+admins don't forget.
+
+### Soft delete trailers
+`DELETE /api/admin/trailers/:id` sets status to `retired` instead of deleting
+the row. Keeps FK integrity for historical bookings and reports. Retired
+trailers are filtered out of the public fleet but remain in admin for
+auditing.
+
+### Cron cleanup is opt-in, not automatic
+`/api/cron/cleanup-pending-bookings` requires `CRON_SECRET`. If the env var
+isn't set, the endpoint 401s — it won't accidentally fire in dev. Vercel Cron
+sends `Authorization: Bearer <secret>`; manual invocations use
+`x-cron-secret`. 30-minute TTL with a 15-minute cron cadence means a stale
+pending booking lives 30-45 minutes before dates are freed.
+
+### Inspections stored separately from bookings
+Could have collapsed pickup/return fields onto the booking row. Keeping the
+separate `inspection` table lets a single booking have both pickup and return
+inspections with their own photo arrays, mileage, fuel, notes, and customer
+signatures. Also sets up Phase 4's damage comparison workflow cleanly.
+
+### Money inputs in the trailer form are dollars, not cents
+Admins type `145.00`, not `14500`. Form converts to/from cents on
+submit/load. Keeps validator honest (`dailyRateCents` is integer cents)
+without making the admin UI confusing.

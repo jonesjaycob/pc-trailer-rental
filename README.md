@@ -20,7 +20,7 @@ and maintenance on a master calendar.
 
 - [x] **Phase 1 — Foundation:** scaffold, schema, auth, public pages, responsive shell
 - [x] **Phase 2 — Booking flow:** availability, 5-step wizard (dates, info, DL upload, e-sign, Stripe pay), rental-fee + deposit-hold Payment Intents, webhook, PDF agreement, confirmation email, customer dashboard with cancel + refund calc
-- [ ] Phase 3 — Admin console (master calendar, CRUD, inspections, reports)
+- [x] **Phase 3 — Admin console:** shell + sidebar, dashboard with upcoming pickups/returns, FullCalendar master calendar color-coded by trailer, trailer CRUD with multi-photo upload, booking admin actions (approve/pickup/return/capture/release deposit), maintenance blocks, pickup/return inspection forms with photo + customer signature, reports (revenue, utilization %), cron cleanup of abandoned bookings
 - [ ] Phase 4 — Reminders, damage workflow, dynamic pricing, SEO, analytics
 
 ## Local setup
@@ -127,6 +127,20 @@ photos, signatures, and signed agreement PDFs are stored there.
 Sign up at resend.com, add an API key to `RESEND_API_KEY`, and verify your
 sending domain if you want emails from your own address. Confirmation email
 send is best-effort — a failed send won't block the booking from completing.
+
+## Cron (Vercel)
+
+`vercel.json` schedules `/api/cron/cleanup-pending-bookings` every 15 minutes.
+It cancels `pending` bookings older than 30 minutes that never reached Stripe,
+freeing up the held dates. Set `CRON_SECRET` in Vercel env vars — Vercel Cron
+sends it as the `Authorization: Bearer` header automatically.
+
+To trigger manually:
+
+```bash
+curl -H "x-cron-secret: $CRON_SECRET" \
+  https://your-domain.vercel.app/api/cron/cleanup-pending-bookings
+```
 
 ## Tests
 

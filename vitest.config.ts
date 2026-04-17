@@ -10,5 +10,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    env: {
+      DATABASE_URL: "postgres://test:test@localhost:5432/test",
+      AUTH_SECRET: "test-secret-abcdef0123456789abcdef",
+    },
   },
 });

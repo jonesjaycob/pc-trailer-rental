@@ -1,0 +1,28 @@
+import { NextResponse } from "next/server";
+import { eq } from "drizzle-orm";
+import { requireAdminApi } from "@/lib/rbac";
+import { db } from "@/lib/db/client";
+import { maintenanceBlocks, auditLogs } from "@/lib/db/schema";
+
+export async function DELETE(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const guard = await requireAdminApi();
+  if (!guard.ok) return guard.response;
+
+  const { id } = await params;
+  const [row] = await db
+    .delete(maintenanceBlocks)
+    .where(eq(maintenanceBlocks.id, id))
+    .returning();
+  if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  await db.insert(auditLogs).values({
+    userId: guard.user.id,
+    action: "maintenance.deleted",
+    entityType: "maintenance_block",
+    entityId: id,
+  });
+  return NextResponse.json({ ok: true });
+}
