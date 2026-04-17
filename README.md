@@ -19,7 +19,7 @@ and maintenance on a master calendar.
 ## Phase status
 
 - [x] **Phase 1 — Foundation:** scaffold, schema, auth, public pages, responsive shell
-- [ ] Phase 2 — Booking flow (dates, deposit, e-sign, Stripe, email)
+- [x] **Phase 2 — Booking flow:** availability, 5-step wizard (dates, info, DL upload, e-sign, Stripe pay), rental-fee + deposit-hold Payment Intents, webhook, PDF agreement, confirmation email, customer dashboard with cancel + refund calc
 - [ ] Phase 3 — Admin console (master calendar, CRUD, inspections, reports)
 - [ ] Phase 4 — Reminders, damage workflow, dynamic pricing, SEO, analytics
 
@@ -92,21 +92,41 @@ Open http://localhost:3000.
      machine with prod `DATABASE_URL`, or via a one-off Vercel Function).
    - Run `npm run db:seed` to create the admin and sample trailers.
 
-## Stripe (Phase 2 — not yet wired)
-
-When Phase 2 lands:
+## Stripe
 
 ```bash
 # Install CLI once
 brew install stripe/stripe-cli/stripe
 
-# In one terminal
+# In one terminal, forward webhooks to your dev server
 stripe listen --forward-to localhost:3000/api/webhooks/stripe
 # Copy the printed webhook signing secret into STRIPE_WEBHOOK_SECRET.
 ```
 
-Use Stripe **test mode** until we're ready to accept real payments. Test keys
-start with `sk_test_` and `pk_test_`.
+Env vars:
+- `STRIPE_SECRET_KEY` — `sk_test_...` from dashboard.stripe.com/test/apikeys
+- `STRIPE_WEBHOOK_SECRET` — printed by `stripe listen`
+- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` — `pk_test_...`
+
+Events the webhook handles:
+- `payment_intent.succeeded` — rental fee captured → booking status → confirmed, confirmation email sent
+- `payment_intent.amount_capturable_updated` — deposit hold authorized, logged
+- `payment_intent.canceled` / `.payment_failed` — audit-logged
+
+Use Stripe **test mode** until you're ready to accept real payments. Test card
+`4242 4242 4242 4242` with any future date and any CVC.
+
+## Vercel Blob
+
+Create a Blob store in the Vercel dashboard under your project → Storage →
+Create → Blob. Copy the token to `BLOB_READ_WRITE_TOKEN`. Driver's license
+photos, signatures, and signed agreement PDFs are stored there.
+
+## Resend
+
+Sign up at resend.com, add an API key to `RESEND_API_KEY`, and verify your
+sending domain if you want emails from your own address. Confirmation email
+send is best-effort — a failed send won't block the booking from completing.
 
 ## Tests
 

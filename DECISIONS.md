@@ -51,3 +51,64 @@ Users can sign up and log in with just email + password. Email verification
 Rugged outdoor palette per user choice: deep pine green primary
 (`155 35% 22%`), warm sand secondary, clay orange accent. Display font is
 Bitter (warm serif), body is Inter.
+
+## Phase 2
+
+### Staying on Auth.js (not Clerk)
+User asked whether to swap to Clerk. Decision: stay. Users are tightly coupled
+to bookings via FK, we'd need a webhook syncer to mirror Clerk users into
+Postgres with eventual-consistency handling, and the business won't hit
+Clerk's free tier. MFA/email verification can be added in Phase 4 via Resend
+magic links without vendor lock-in.
+
+### No-overlap enforced at DB level via exclusion constraint
+The `neon-http` driver does not support transactions, and `SELECT FOR UPDATE`
+requires `neon-serverless` (WebSocket). Instead of adding a second driver, we
+enforce no-overlap with a Postgres **btree_gist exclusion constraint** on
+`(trailer_id, daterange(start_date, end_date, '[)'))` scoped to active
+statuses. An overlapping insert is rejected by the DB with a catchable error.
+Belt-and-suspenders: the API also checks availability before insert, and the
+finalize route re-checks before creating Stripe PIs. The migration applies
+the constraint via raw SQL since Drizzle Kit doesn't model exclusion
+constraints.
+
+### Two Payment Intents, reusing payment method
+Front end confirms the rental PI (auto capture) via Stripe Elements, then
+reuses the returned payment method to confirm the deposit PI (manual capture
+= authorization hold). Renter enters their card once. If the deposit
+confirmation fails, the UI surfaces it so support can release the hold
+manually.
+
+### Signature stored as PNG in Blob + embedded in PDF
+Canvas signature produces a base64 PNG data URL. Finalize route writes the
+PNG to Blob, generates the rental agreement PDF with `pdf-lib`, embeds the
+PNG on the signature line, and stores the PDF URL on the booking. Email
+confirmation links to the PDF rather than attaching it (keeps URL usable
+from dashboard and avoids Resend size caps).
+
+### Booking stays `pending` until webhook confirms payment
+Creating a draft booking reserves the dates (the exclusion constraint makes
+that real), but status stays `pending` until Stripe confirms payment via
+webhook → moves to `confirmed`. A user who abandons checkout holds the dates
+until their row ages out — Phase 3 will add a cleanup job for pending
+bookings older than 30 minutes with no Payment Intent.
+
+### Cancellation refund is best-effort against Stripe
+If `STRIPE_SECRET_KEY` is set and the PI exists, we refund and cancel the
+deposit PI. If Stripe calls fail we log and still mark the booking cancelled
+— a partial failure shouldn't leave the DB in a stuck state. Audit log
+captures the attempt; admin can reconcile in the Stripe dashboard.
+
+### Age check at finalize, not registration
+We enforce 21+ in the finalize endpoint (and the info step UI) rather than
+blocking signup. Keeps under-21 users available for future bookings and
+avoids an unfriendly wall at the front door.
+
+### Email send is best-effort
+`sendEmail` logs-and-returns if `RESEND_API_KEY` is unset, and webhook
+handlers catch send failures without failing the webhook. Booking is
+confirmed regardless; the user can always see it in their dashboard.
+
+### Stripe API version
+Pinned to `2025-02-24.acacia` (matches installed `stripe@17.5` types).
+Bump deliberately when upgrading the SDK.

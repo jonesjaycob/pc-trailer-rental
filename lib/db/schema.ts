@@ -41,6 +41,7 @@ export const users = pgTable("user", {
   role: userRoleEnum("role").notNull().default("customer"),
   driversLicenseUrl: text("drivers_license_url"),
   driversLicenseVerifiedAt: timestamp("drivers_license_verified_at"),
+  stripeCustomerId: text("stripe_customer_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
