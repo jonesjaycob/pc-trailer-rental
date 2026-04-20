@@ -21,7 +21,7 @@ and maintenance on a master calendar.
 - [x] **Phase 1 — Foundation:** scaffold, schema, auth, public pages, responsive shell
 - [x] **Phase 2 — Booking flow:** availability, 5-step wizard (dates, info, DL upload, e-sign, Stripe pay), rental-fee + deposit-hold Payment Intents, webhook, PDF agreement, confirmation email, customer dashboard with cancel + refund calc
 - [x] **Phase 3 — Admin console:** shell + sidebar, dashboard with upcoming pickups/returns, FullCalendar master calendar color-coded by trailer, trailer CRUD with multi-photo upload, booking admin actions (approve/pickup/return/capture/release deposit), maintenance blocks, pickup/return inspection forms with photo + customer signature, reports (revenue, utilization %), cron cleanup of abandoned bookings
-- [ ] Phase 4 — Reminders, damage workflow, dynamic pricing, SEO, analytics
+- [x] **Phase 4 — Polish:** 24h-pickup + day-of-return reminder emails (+ optional Twilio SMS), damage claim workflow with side-by-side pickup/return photos and line-item capture against deposit, dynamic pricing rules (date-windowed multipliers, optional per-trailer, day-of-week mask), SEO (sitemap.xml, robots.txt, LocalBusiness + Product JSON-LD), Vercel Analytics
 
 ## Local setup
 
@@ -130,17 +130,37 @@ send is best-effort — a failed send won't block the booking from completing.
 
 ## Cron (Vercel)
 
-`vercel.json` schedules `/api/cron/cleanup-pending-bookings` every 15 minutes.
-It cancels `pending` bookings older than 30 minutes that never reached Stripe,
-freeing up the held dates. Set `CRON_SECRET` in Vercel env vars — Vercel Cron
-sends it as the `Authorization: Bearer` header automatically.
+`vercel.json` schedules two cron jobs:
 
-To trigger manually:
+- `/api/cron/cleanup-pending-bookings` — every 15 min. Cancels `pending`
+  bookings older than 30 min that never reached Stripe, freeing up dates.
+- `/api/cron/send-reminders` — daily at 15:00 UTC (~9am CT). Sends 24h-out
+  pickup reminders and day-of return reminders. Idempotent via
+  `booking.remindersSent` jsonb.
+
+Set `CRON_SECRET` in Vercel env vars — Vercel Cron sends it as the
+`Authorization: Bearer` header automatically. To trigger manually:
 
 ```bash
 curl -H "x-cron-secret: $CRON_SECRET" \
   https://your-domain.vercel.app/api/cron/cleanup-pending-bookings
+
+curl -H "x-cron-secret: $CRON_SECRET" \
+  https://your-domain.vercel.app/api/cron/send-reminders
 ```
+
+## SMS (optional)
+
+Reminder emails include SMS automatically when all three Twilio env vars are
+set: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`. Without
+them, SMS sends are silent no-ops — email reminders still work.
+
+## SEO & Analytics
+
+- `app/sitemap.ts` — includes static pages and every active trailer, regenerates hourly
+- `app/robots.ts` — allows `/`, disallows `/admin`, `/dashboard`, `/api`, `/book`
+- JSON-LD — `AutoRental` schema in the root layout; `Product` schema on each trailer page
+- Vercel Analytics — `@vercel/analytics/react` loaded in root layout; no config needed, shows in Vercel dashboard Analytics tab once deployed
 
 ## Tests
 

@@ -160,3 +160,56 @@ signatures. Also sets up Phase 4's damage comparison workflow cleanly.
 Admins type `145.00`, not `14500`. Form converts to/from cents on
 submit/load. Keeps validator honest (`dailyRateCents` is integer cents)
 without making the admin UI confusing.
+
+## Phase 4
+
+### Pricing rules stored in basis points, multiplicative compounding
+`pricing_rule.multiplierBps` is integer basis points (`12500` = 1.25x, `9000`
+= 0.9x). Multiple overlapping rules on the same day compound
+multiplicatively — a 1.2x seasonal and a 1.1x weekend give 1.32x. Per-trailer
+rules (`trailerId` set) and global rules (`trailerId` null) both apply. A
+day-of-week mask (`dowMask`, 7 bits) lets a single rule target weekends
+only, weekdays only, or any combination. Kept math pure in `lib/pricing.ts`
+for easy unit testing (9 new tests).
+
+### Flat-tier rates multiplied by the MAX day multiplier in the window
+Daily-rate pricing multiplies each day individually. For weekly and weekend
+flat tiers, we apply the maximum multiplier across the booking window — so a
+customer can't escape a holiday premium by choosing the weekly tier.
+
+### SMS is feature-flagged, never breaks the send loop
+`lib/sms.ts` checks for the three Twilio env vars up front. If any is
+missing, `smsEnabled()` returns false and `sendSms` logs-and-returns. The
+reminder loop wraps each send in try/catch and keeps going on failure — so
+one bad phone number doesn't block 30 other reminders.
+
+### Reminder idempotency via jsonb column
+`booking.remindersSent` is a jsonb `{ pickup24h?: string, returnDay?: string }`
+updated via a SQL merge `||` on the existing value. Lets the cron run any
+number of times per day without double-sending. No separate reminder-log
+table needed.
+
+### Reminders are cron-time-based, not scheduled per booking
+Cron runs once/day at 15:00 UTC and asks "which bookings start tomorrow?" /
+"which bookings end today?". Simpler than per-booking scheduled jobs, which
+would need a queue. Trade-off: reminders go out at roughly the same time
+each day regardless of pickup hour. Good enough for a local rental business.
+
+### Damage claims capture against the deposit PI directly
+A claim is a row of line items. On submit, server sums them, verifies the
+total ≤ available deposit, and captures that exact amount from the deposit
+Payment Intent via `stripe.paymentIntents.capture({ amount_to_capture })`.
+Multiple claims are allowed up to the deposit total — useful when damage is
+discovered later. `damage_claim.capturedPaymentIntentId` records the PI used
+so the audit trail is complete.
+
+### SEO sitemap tolerates build-time DB failure
+The sitemap dynamically queries the DB for active trailer slugs. If the DB
+is unreachable at build or runtime (e.g. CI with no `DATABASE_URL`), we log
+and return just the static pages rather than failing the build. `revalidate
+= 3600` caches it for an hour in production.
+
+### dotenv moved to runtime dependency
+`drizzle.config.ts`, `db:migrate`, and `db:seed` use `import "dotenv/config"`
+so npm scripts pick up `.env.local` automatically. Moved `dotenv` from
+aspirational to a real dep during Phase 4.

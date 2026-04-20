@@ -10,6 +10,7 @@ import {
   ClipboardList,
   Wrench,
   BarChart3,
+  Tags,
 } from "lucide-react";
 
 const nav = [
@@ -18,6 +19,7 @@ const nav = [
   { href: "/admin/bookings", label: "Bookings", icon: ClipboardList },
   { href: "/admin/trailers", label: "Trailers", icon: Truck },
   { href: "/admin/maintenance", label: "Maintenance", icon: Wrench },
+  { href: "/admin/pricing", label: "Pricing rules", icon: Tags },
   { href: "/admin/reports", label: "Reports", icon: BarChart3 },
 ];
 

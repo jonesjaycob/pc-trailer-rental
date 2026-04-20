@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { calculatePricing, pickBaseRateCents, rentalDaysBetween } from "@/lib/pricing";
 
 const baseTrailer = {
+  id: "trailer-1",
   dailyRateCents: 10000, // $100/day
   weekendRateCents: 25000, // $250 Fri–Sun
   weeklyRateCents: 60000, // $600/week

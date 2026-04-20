@@ -1,6 +1,12 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, or, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { bookings, maintenanceBlocks, trailers, settings } from "@/lib/db/schema";
+import {
+  bookings,
+  maintenanceBlocks,
+  trailers,
+  settings,
+  pricingRules,
+} from "@/lib/db/schema";
 import { calculatePricing } from "@/lib/pricing";
 import { parseDateOnly, withBuffer } from "@/lib/availability";
 
@@ -130,11 +136,25 @@ export async function createDraftBooking(input: CreateBookingInput) {
   if (!avail.ok) return { ok: false as const, error: avail.reason };
 
   const s = await getSettings();
+
+  // Load any pricing rules overlapping this window for this trailer (or global)
+  const rules = await db
+    .select()
+    .from(pricingRules)
+    .where(
+      and(
+        or(isNull(pricingRules.trailerId), eq(pricingRules.trailerId, input.trailerId))!,
+        lte(pricingRules.startDate, input.endDate),
+        gte(pricingRules.endDate, input.startDate)
+      )
+    );
+
   const pricing = calculatePricing({
     trailer,
     start,
     end,
     taxRateBps: s.taxRateBps,
+    pricingRules: rules,
   });
 
   try {

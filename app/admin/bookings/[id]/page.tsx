@@ -105,6 +105,21 @@ export default async function AdminBookingDetailPage({
             </ul>
           </div>
 
+          {(row.booking.status === "active" ||
+            row.booking.status === "completed") &&
+            row.booking.stripeDepositIntentId && (
+              <div className="rounded-lg border bg-card p-4">
+                <p className="font-semibold mb-1">Damage claim</p>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Compare pickup vs return photos and charge specific damages
+                  against the security deposit.
+                </p>
+                <Button asChild variant="accent" size="sm">
+                  <Link href={`/admin/bookings/${id}/claim`}>Open claim tool</Link>
+                </Button>
+              </div>
+            )}
+
           <div className="rounded-lg border bg-card p-4">
             <p className="font-semibold mb-3">Inspections</p>
             <div className="grid grid-cols-2 gap-3 text-sm">

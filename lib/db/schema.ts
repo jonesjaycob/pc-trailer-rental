@@ -141,6 +141,10 @@ export const bookings = pgTable(
     returnInspectionId: uuid("return_inspection_id"),
     cancelReason: text("cancel_reason"),
     cancelledAt: timestamp("cancelled_at"),
+    remindersSent: jsonb("reminders_sent")
+      .$type<{ pickup24h?: string; returnDay?: string }>()
+      .notNull()
+      .default({}),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (t) => [
@@ -187,6 +191,49 @@ export const auditLogs = pgTable("audit_log", {
   entityType: text("entity_type").notNull(),
   entityId: text("entity_id"),
   metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * Admin-configured pricing rules. Each rule defines a date window and a
+ * multiplier applied to the daily rate for days that fall inside. Multiple
+ * overlapping rules compound multiplicatively. `dowMask` is a 7-bit mask
+ * (Sun=1, Mon=2, ... Sat=64) limiting the rule to certain weekdays; 127
+ * means all days.
+ */
+export const pricingRules = pgTable(
+  "pricing_rule",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    label: text("label").notNull(),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    multiplierBps: integer("multiplier_bps").notNull(), // 12500 = 1.25x
+    dowMask: integer("dow_mask").notNull().default(127),
+    trailerId: uuid("trailer_id").references(() => trailers.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("pricing_rule_dates_idx").on(t.startDate, t.endDate)]
+);
+
+/**
+ * A damage claim recorded after return. Each line item has a description
+ * and amount. Total is captured against the deposit PI.
+ */
+export const damageClaims = pgTable("damage_claim", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  bookingId: uuid("booking_id")
+    .notNull()
+    .references(() => bookings.id, { onDelete: "cascade" }),
+  lineItems: jsonb("line_items")
+    .$type<{ description: string; amountCents: number }[]>()
+    .notNull(),
+  totalCents: integer("total_cents").notNull(),
+  capturedPaymentIntentId: text("captured_payment_intent_id"),
+  notes: text("notes"),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -254,3 +301,7 @@ export type NewBooking = typeof bookings.$inferInsert;
 export type Inspection = typeof inspections.$inferSelect;
 export type MaintenanceBlock = typeof maintenanceBlocks.$inferSelect;
 export type Settings = typeof settings.$inferSelect;
+export type PricingRule = typeof pricingRules.$inferSelect;
+export type NewPricingRule = typeof pricingRules.$inferInsert;
+export type DamageClaim = typeof damageClaims.$inferSelect;
+export type NewDamageClaim = typeof damageClaims.$inferInsert;

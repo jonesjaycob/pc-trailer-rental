@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
+import { JsonLd, trailerJsonLd } from "@/lib/seo";
 
 export async function generateMetadata({
   params,
@@ -32,6 +33,7 @@ export default async function TrailerPage({
 
   return (
     <div className="container py-12">
+      <JsonLd data={trailerJsonLd(t)} />
       <Link href="/fleet" className="text-sm text-muted-foreground hover:text-foreground mb-4 inline-block">
         ← Back to fleet
       </Link>

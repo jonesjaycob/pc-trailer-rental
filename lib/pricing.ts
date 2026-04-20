@@ -1,4 +1,4 @@
-import type { Trailer } from "@/lib/db/schema";
+import type { Trailer, PricingRule } from "@/lib/db/schema";
 
 export type PricingLineItem = { label: string; amountCents: number };
 
@@ -22,34 +22,121 @@ export function rentalDaysBetween(start: Date, end: Date): number {
 }
 
 /**
- * Picks the cheapest tier (daily × N, weekend flat, weekly flat) for the renter.
- * A "weekend" here is a Fri-Sun (2 or 3 night) window — we apply the weekend rate
- * if the booking covers exactly a Fri–Sun or Fri–Mon window, otherwise we compare
- * daily and weekly.
+ * Returns the combined multiplier (as a float, 1.0 = no change) for a given
+ * calendar day and trailer, applying all matching pricing rules
+ * multiplicatively. A rule matches if:
+ *  - the day falls in [startDate, endDate]
+ *  - the day-of-week bit in `dowMask` is set
+ *  - `trailerId` is null (applies to all trailers) OR equals this trailer.
+ */
+export function multiplierForDay(
+  day: Date,
+  trailerId: string,
+  rules: PricingRule[]
+): number {
+  const iso = day.toISOString().slice(0, 10);
+  const dow = day.getUTCDay(); // 0 = Sun
+  const bit = 1 << dow;
+
+  let mult = 1;
+  for (const rule of rules) {
+    if (rule.trailerId && rule.trailerId !== trailerId) continue;
+    if ((rule.dowMask & bit) === 0) continue;
+    if (iso < rule.startDate || iso > rule.endDate) continue;
+    mult *= rule.multiplierBps / 10000;
+  }
+  return mult;
+}
+
+/**
+ * Sums the daily rate across the booking window, applying per-day multipliers.
+ * Returns the multiplied daily-rate total plus how many days had a premium.
+ */
+export function calculateRuleBasedDailyTotal({
+  trailer,
+  start,
+  end,
+  rules,
+}: {
+  trailer: Pick<Trailer, "dailyRateCents" | "id">;
+  start: Date;
+  end: Date;
+  rules: PricingRule[];
+}) {
+  let total = 0;
+  let daysWithPremium = 0;
+  for (
+    let d = new Date(start.getTime());
+    d < end;
+    d = new Date(d.getTime() + 24 * 60 * 60 * 1000)
+  ) {
+    const mult = multiplierForDay(d, trailer.id, rules);
+    total += Math.round(trailer.dailyRateCents * mult);
+    if (mult !== 1) daysWithPremium++;
+  }
+  return { total, daysWithPremium };
+}
+
+/**
+ * Picks the cheapest tier for the renter, considering dynamic pricing rules:
+ *   - daily: per-day daily rate × applicable multiplier
+ *   - weekly blocks (7 days): flat weekly rate, untouched by day-of-week rules
+ *     (seasonal rules still apply via an average-multiplier approach below)
+ *   - weekend: Fri-Sun or Fri-Mon flat, unchanged
+ * Rules can only INCREASE (premium) or DECREASE the daily sum. Weekly and
+ * weekend flat rates are multiplied by the max multiplier over the window, so
+ * a customer can't escape a holiday premium by choosing the weekly tier.
  */
 export function pickBaseRateCents(
-  trailer: Pick<Trailer, "dailyRateCents" | "weekendRateCents" | "weeklyRateCents">,
+  trailer: Pick<Trailer, "id" | "dailyRateCents" | "weekendRateCents" | "weeklyRateCents">,
   start: Date,
-  end: Date
+  end: Date,
+  rules: PricingRule[] = []
 ): { amountCents: number; label: string; days: number } {
   const days = rentalDaysBetween(start, end);
-  const startDow = start.getUTCDay(); // 0 = Sun, 5 = Fri
+  const startDow = start.getUTCDay();
+  const isWeekendWindow = startDow === 5 && (days === 2 || days === 3);
 
-  const isWeekendWindow =
-    startDow === 5 && (days === 2 || days === 3); // Fri-Sun or Fri-Mon
+  const dailyCalc = calculateRuleBasedDailyTotal({ trailer, start, end, rules });
+  const dailyLabel =
+    dailyCalc.daysWithPremium > 0
+      ? `Daily rate × ${days} (${dailyCalc.daysWithPremium} day(s) with premium/discount)`
+      : `Daily rate × ${days}`;
 
-  const dailyTotal = trailer.dailyRateCents * days;
+  // For flat tiers, apply the max multiplier across the window.
+  let maxMult = 1;
+  for (
+    let d = new Date(start.getTime());
+    d < end;
+    d = new Date(d.getTime() + 24 * 60 * 60 * 1000)
+  ) {
+    const m = multiplierForDay(d, trailer.id, rules);
+    if (m > maxMult) maxMult = m;
+  }
+
   const weeklyBlocks = Math.floor(days / 7);
   const weeklyRemainder = days % 7;
-  const weeklyTotal =
-    weeklyBlocks * trailer.weeklyRateCents + weeklyRemainder * trailer.dailyRateCents;
+  const weeklyFlat = Math.round(trailer.weeklyRateCents * maxMult);
+  const weeklyDailyRemainderSum =
+    weeklyRemainder > 0
+      ? calculateRuleBasedDailyTotal({
+          trailer,
+          start: new Date(start.getTime() + weeklyBlocks * 7 * 24 * 60 * 60 * 1000),
+          end,
+          rules,
+        }).total
+      : 0;
+  const weeklyTotal = weeklyBlocks * weeklyFlat + weeklyDailyRemainderSum;
 
   const options: { amountCents: number; label: string }[] = [
-    { amountCents: dailyTotal, label: `Daily rate × ${days}` },
+    { amountCents: dailyCalc.total, label: dailyLabel },
     { amountCents: weeklyTotal, label: `Weekly rate + ${weeklyRemainder} day(s)` },
   ];
   if (isWeekendWindow) {
-    options.push({ amountCents: trailer.weekendRateCents, label: "Weekend rate (Fri–Sun)" });
+    options.push({
+      amountCents: Math.round(trailer.weekendRateCents * maxMult),
+      label: "Weekend rate (Fri–Sun)",
+    });
   }
 
   const best = options.reduce((a, b) => (b.amountCents < a.amountCents ? b : a));
@@ -59,17 +146,24 @@ export function pickBaseRateCents(
 export type PricingInput = {
   trailer: Pick<
     Trailer,
-    "dailyRateCents" | "weekendRateCents" | "weeklyRateCents" | "securityDepositCents"
+    "id" | "dailyRateCents" | "weekendRateCents" | "weeklyRateCents" | "securityDepositCents"
   >;
   start: Date;
   end: Date;
-  taxRateBps: number; // e.g. 1000 = 10.00%
+  taxRateBps: number;
+  pricingRules?: PricingRule[];
 };
 
-export function calculatePricing({ trailer, start, end, taxRateBps }: PricingInput): PricingBreakdown {
+export function calculatePricing({
+  trailer,
+  start,
+  end,
+  taxRateBps,
+  pricingRules = [],
+}: PricingInput): PricingBreakdown {
   if (end <= start) throw new Error("End date must be after start date");
 
-  const base = pickBaseRateCents(trailer, start, end);
+  const base = pickBaseRateCents(trailer, start, end, pricingRules);
   const subtotal = base.amountCents;
   const tax = Math.round((subtotal * taxRateBps) / 10000);
   const total = subtotal + tax;

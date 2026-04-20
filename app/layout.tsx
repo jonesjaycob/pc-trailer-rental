@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { Inter, Bitter } from "next/font/google";
+import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
 import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
+import { JsonLd, localBusinessJsonLd } from "@/lib/seo";
 
 const sans = Inter({ subsets: ["latin"], variable: "--font-sans", display: "swap" });
 const display = Bitter({
@@ -29,6 +31,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <SiteHeader />
         <main className="flex-1">{children}</main>
         <SiteFooter />
+        <JsonLd data={localBusinessJsonLd()} />
+        <Analytics />
       </body>
     </html>
   );
